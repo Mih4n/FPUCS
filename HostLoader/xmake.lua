@@ -42,6 +42,10 @@ target("my-plugin")
         add_ldflags(
             "-stdlib=libc++"
         )
+        add_links("dl")
+        add_links("nethost")
+        add_linkdirs("/usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.0/runtimes/linux-x64/native")
+        add_includedirs("/usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.0/runtimes/linux-x64/native")
     end
 
     after_build(function(target)
