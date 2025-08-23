@@ -1,9 +1,13 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
 
-namespace DotnetLoader;
-
-public class Entry 
+namespace DotnetLoader
 {
-    [UnmanagedCallersOnly(EntryPoint = "HelloFromDotnet")]
-    public static void Hello() => Console.WriteLine("Привет из .NET!");
+    public static class Entry 
+    {
+        public static int Hello(IntPtr arg, int argLength)
+        {
+            Console.WriteLine("Hello from C#");
+            return 0;
+        }
+    }
 }

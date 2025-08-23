@@ -1,7 +1,7 @@
 add_rules("mode.debug", "mode.release")
 
 add_repositories("groupmountain-repo https://github.com/GroupMountain/xmake-repo.git")
-add_repositories("xmake-repo https://github.com/Mih4n/xmake-repo.git")
+add_repositories("xmake-repo https://github.com/xmake-io/xmake-repo.git")
 
 add_requires("endstone 0.9.1")
 add_requires("dotnet 9.0.3")
@@ -27,10 +27,11 @@ target("my-plugin")
     if is_plat("windows") then
         add_defines("NOMINMAX")
         add_cxflags(
-            "/EHsc", 
+            "/EHsc",  
             "/utf-8", 
-            "/W4"
+            "/W4"     
         )
+        add_links("nethost")
     else
         add_cxxflags("-Wno-gnu-line-marker")
         add_cxflags(
@@ -42,10 +43,7 @@ target("my-plugin")
         add_ldflags(
             "-stdlib=libc++"
         )
-        add_links("dl")
         add_links("nethost")
-        add_linkdirs("/usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.0/runtimes/linux-x64/native")
-        add_includedirs("/usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.0/runtimes/linux-x64/native")
     end
 
     after_build(function(target)
@@ -53,9 +51,22 @@ target("my-plugin")
         local output_dir = path.join(os.projectdir(), "bin")
         os.mkdir(output_dir)
         local filename = path.filename(file)
+
         if os.host() == "linux" then
             filename = filename:sub(4)
         end
+
         os.cp(file, path.join(output_dir, filename))
-        cprint("${bright green}[Plugin]: ${reset}plugin already generated to " .. output_dir)
+
+        if os.host() == "windows" then
+            local nethost_path = "C:/Program Files/dotnet/packs/Microsoft.NETCore.App.Host.win-x64/9.0.8/runtimes/win-x64/native/nethost.dll"
+            if os.exists(nethost_path) then
+                os.cp(nethost_path, path.join(output_dir, "nethost.dll"))
+                cprint("${bright green}[Plugin]: ${reset}nethost.dll copied to " .. output_dir)
+            else
+                cprint("${bright red}[Plugin]: ${reset}Warning: nethost.dll not found at " .. nethost_path)
+            end
+        end
+
+        cprint("${bright green}[Plugin]: ${reset} generated into " .. output_dir)
     end)

@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <string>
+#include <vector>
 #include <nethost.h>
 #include <hostfxr.h>
 #include <coreclr_delegates.h>
@@ -43,6 +45,32 @@ InitializeForRuntimeConfig InitForConfigFn = nullptr;
 LoadAssemblyAndGetFunctionPtr LoadAssemblyFn = nullptr;
 HelloFunction* HelloFromDotnet = nullptr;
 
+bool TryGetExecutablePath(std::basic_string<char_t>& path)
+{
+#ifdef _WIN32
+    std::vector<char_t> buf(MAX_PATH);
+    DWORD len = GetModuleFileNameW(nullptr, buf.data(), (DWORD)buf.size());
+    if (len == 0) return false;
+    path = std::basic_string<char_t>(buf.data(), len);
+    size_t last_slash = path.find_last_of(DIR_SEPARATOR);
+    if (last_slash != std::basic_string<char_t>::npos) {
+        path.resize(last_slash + 1);
+    }
+    return true;
+#else
+    char_t buf[MAX_PATH];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf));
+    if (len == -1 || len == sizeof(buf)) return false;
+    buf[len] = '\0';
+    path = std::basic_string<char_t>(buf);
+    size_t last_slash = path.find_last_of(DIR_SEPARATOR);
+    if (last_slash != std::basic_string<char_t>::npos) {
+        path.resize(last_slash + 1);
+    }
+    return true;
+#endif
+}
+
 bool TryGetHostPath()
 {
     size_t len = sizeof(HostPath) / sizeof(HostPath[0]);
@@ -67,19 +95,62 @@ bool GetDelegates()
 
 bool LoadManagedMethod(const char_t* configPath)
 {
+    wprintf(L"Loading runtime config: %ls\n", configPath);
+    if (_waccess(configPath, 0) != 0) {
+        std::cerr << "runtime.config.json does not exist or is inaccessible" << std::endl;
+        return false;
+    }
+
     int result = InitForConfigFn(configPath, nullptr, &HostFxrHandle);
-    if (result != 0 || !HostFxrHandle) return false;
+    if (result != 0 || !HostFxrHandle)
+    {
+        std::cerr << "Failed to initialize hostfxr with result: " << result << std::endl;
+        return false;
+    }
+    wprintf(L"Hostfxr initialized successfully.\n");
+
     result = GetDelegateFn(HostFxrHandle, hdt_load_assembly_and_get_function_pointer, (void**)&LoadAssemblyFn);
-    if (result != 0 || !LoadAssemblyFn) return false;
+    if (result != 0 || !LoadAssemblyFn)
+    {
+        std::cerr << "Failed to get load assembly function with result: " << result << std::endl;
+        return false;
+    }
+    wprintf(L"Load assembly delegate retrieved.\n");
+
+    std::basic_string<char_t> assembly_path = STR("D:\\.mine\\endstone\\FPUCS\\HostLoader\\bin\\DotnetLoader.dll");
+    wprintf(L"Assembly path: %ls\n", assembly_path.c_str());
+    if (_waccess(assembly_path.c_str(), 0) != 0) {
+        std::cerr << "DotnetLoader.dll does not exist or is inaccessible" << std::endl;
+        return false;
+    }
+
+    const char_t *dotnet_type = STR("DotnetLoader.Entry, DotnetLoader");
+    const char_t *dotnet_type_method = STR("Hello");
+
+
     result = LoadAssemblyFn(
-        STR("DotnetLoader.dll"),
-        STR("DotnetLoader.Entry, DotnetLoader"),
-        STR("HelloFromDotnet"),
-        UNMANAGEDCALLERSONLY_METHOD,
+        assembly_path.c_str(),
+        dotnet_type,
+        dotnet_type_method,
+        nullptr,
         nullptr,
         (void**)&HelloFromDotnet
     );
-    return result == 0 && HelloFromDotnet != nullptr;
+
+    if (result != 0)
+    {
+        std::cerr << "Failed to load assembly with result: " << result << std::endl;
+        return false;
+    }
+
+    if (!HelloFromDotnet)
+    {
+        std::cerr << "Failed to get HelloFromDotnet function" << std::endl;
+        return false;
+    }
+
+    wprintf(L"Successfully loaded HelloFromDotnet function.\n");
+    return true;
 }
 
 void RunManaged()
@@ -90,9 +161,33 @@ void RunManaged()
 
 int main()
 {
-    if (!InitializeHostFxr()) return 1;
-    if (!GetDelegates()) return 1;
-    if (!LoadManagedMethod(STR("DotnetLoader.runtimeconfig.json"))) return 1;
+    if (!InitializeHostFxr())
+    {
+        std::cerr << "Failed to initialize hostfxr" << std::endl;
+        return 1;
+    }
+    if (!GetDelegates())
+    {
+        std::cerr << "Failed to get delegates" << std::endl;
+        return 1;
+    }
+
+    std::basic_string<char_t> configPath;
+    if (!TryGetExecutablePath(configPath))
+    {
+        std::cerr << "Не удалось получить путь к исполняемому файлу." << std::endl;
+        return 1;
+    }
+    configPath += STR("runtime.config.json");
+
+    wprintf(L"configPath: %ls\n", configPath.c_str());
+
+    if (!LoadManagedMethod(configPath.c_str()))
+    {
+        std::cerr << "Failed to load managed method" << std::endl;
+        return 1;
+    }
+
     RunManaged();
     return 0;
 }
