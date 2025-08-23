@@ -1,6 +1,5 @@
 #include <iostream>
 #include <string>
-#include <string>
 #include <vector>
 #include <nethost.h>
 #include <hostfxr.h>
@@ -8,42 +7,43 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <io.h>
 #define STR(s) L ## s
-#define CH(c) L ## c
 #define DIR_SEPARATOR L'\\'
-#define StringCompare wcscmp
+using char_t = wchar_t;
 using LibHandle = HMODULE;
 inline LibHandle LoadLibrary(const char_t* path) { return ::LoadLibraryW(path); }
 inline void* GetExport(LibHandle lib, const char* name) { return (void*)::GetProcAddress(lib, name); }
-
 #else
+#include <unistd.h>
 #include <dlfcn.h>
 #include <limits.h>
 #define STR(s) s
-#define CH(c) c
 #define DIR_SEPARATOR '/'
 #define MAX_PATH PATH_MAX
-#define StringCompare strcmp
+using char_t = char;
 using LibHandle = void*;
 inline LibHandle LoadLibrary(const char_t* path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); }
 inline void* GetExport(LibHandle lib, const char* name) { return dlsym(lib, name); }
 #endif
 
-using CloseHost = hostfxr_close_fn;
-using HostHandler = hostfxr_handle;
-using GetRuntimeDelegate = hostfxr_get_runtime_delegate_fn;
-using InitializeForRuntimeConfig = hostfxr_initialize_for_runtime_config_fn;
-using LoadAssemblyAndGetFunctionPtr = load_assembly_and_get_function_pointer_fn;
-using HelloFunction = void(void);
+struct Plugin
+{
+    void (*OnLoad)() { nullptr };
+    void (*OnEnable)() { nullptr };
+    void (*OnDisable)() { nullptr };
+};
 
-char_t HostPath[MAX_PATH];
-LibHandle HostfxrLibrary = nullptr;
-HostHandler HostFxrHandle = nullptr;
-CloseHost CloseHostFn = nullptr;
-GetRuntimeDelegate GetDelegateFn = nullptr;
-InitializeForRuntimeConfig InitForConfigFn = nullptr;
-LoadAssemblyAndGetFunctionPtr LoadAssemblyFn = nullptr;
-HelloFunction* HelloFromDotnet = nullptr;
+using EntryPointFunction = int(*)(void* arg, int argLength);
+
+struct HostContext {
+    LibHandle Library { nullptr };
+    hostfxr_handle Handle { nullptr };
+    hostfxr_close_fn CloseFn { nullptr };
+    hostfxr_get_runtime_delegate_fn GetDelegateFn { nullptr };
+    hostfxr_initialize_for_runtime_config_fn InitConfigFn { nullptr };
+    load_assembly_and_get_function_pointer_fn LoadAssemblyFn { nullptr };
+};
 
 bool TryGetExecutablePath(std::basic_string<char_t>& path)
 {
@@ -51,143 +51,108 @@ bool TryGetExecutablePath(std::basic_string<char_t>& path)
     std::vector<char_t> buf(MAX_PATH);
     DWORD len = GetModuleFileNameW(nullptr, buf.data(), (DWORD)buf.size());
     if (len == 0) return false;
-    path = std::basic_string<char_t>(buf.data(), len);
-    size_t last_slash = path.find_last_of(DIR_SEPARATOR);
-    if (last_slash != std::basic_string<char_t>::npos) {
-        path.resize(last_slash + 1);
-    }
-    return true;
+    path.assign(buf.data(), len);
 #else
     char_t buf[MAX_PATH];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf));
     if (len == -1 || len == sizeof(buf)) return false;
     buf[len] = '\0';
-    path = std::basic_string<char_t>(buf);
-    size_t last_slash = path.find_last_of(DIR_SEPARATOR);
-    if (last_slash != std::basic_string<char_t>::npos) {
-        path.resize(last_slash + 1);
-    }
-    return true;
+    path.assign(buf);
 #endif
-}
-
-bool TryGetHostPath()
-{
-    size_t len = sizeof(HostPath) / sizeof(HostPath[0]);
-    return get_hostfxr_path(HostPath, &len, nullptr) == 0;
-}
-
-bool InitializeHostFxr()
-{
-    if (!TryGetHostPath()) return false;
-    HostfxrLibrary = LoadLibrary(HostPath);
-    if (!HostfxrLibrary) return false;
+    size_t lastSlash = path.find_last_of(DIR_SEPARATOR);
+    if (lastSlash != std::basic_string<char_t>::npos)
+        path.resize(lastSlash + 1);
     return true;
 }
 
-bool GetDelegates()
+bool TryGetHostPath(std::basic_string<char_t>& hostPath)
 {
-    CloseHostFn = (CloseHost)GetExport(HostfxrLibrary, "hostfxr_close");
-    GetDelegateFn = (GetRuntimeDelegate)GetExport(HostfxrLibrary, "hostfxr_get_runtime_delegate");
-    InitForConfigFn = (InitializeForRuntimeConfig)GetExport(HostfxrLibrary, "hostfxr_initialize_for_runtime_config");
-    return CloseHostFn && GetDelegateFn && InitForConfigFn;
+    char_t buffer[MAX_PATH];
+    size_t len = sizeof(buffer) / sizeof(buffer[0]);
+    if (get_hostfxr_path(buffer, &len, nullptr) != 0)
+        return false;
+    hostPath.assign(buffer, len);
+    return true;
 }
 
-bool LoadManagedMethod(const char_t* configPath)
+bool TryInitializeHostFxr(const std::basic_string<char_t>& hostPath, HostContext& ctx)
 {
-    wprintf(L"Loading runtime config: %ls\n", configPath);
-    if (_waccess(configPath, 0) != 0) {
-        std::cerr << "runtime.config.json does not exist or is inaccessible" << std::endl;
+    ctx.Library = LoadLibrary(hostPath.c_str());
+    if (!ctx.Library) return false;
+
+    ctx.CloseFn = (hostfxr_close_fn)GetExport(ctx.Library, "hostfxr_close");
+    ctx.InitConfigFn = (hostfxr_initialize_for_runtime_config_fn)GetExport(ctx.Library, "hostfxr_initialize_for_runtime_config");
+    ctx.GetDelegateFn = (hostfxr_get_runtime_delegate_fn)GetExport(ctx.Library, "hostfxr_get_runtime_delegate");
+
+    return ctx.CloseFn && ctx.GetDelegateFn && ctx.InitConfigFn;
+}
+
+bool TryLoadManagedMethod(const std::basic_string<char_t>& path, HostContext& ctx, EntryPointFunction* entry)
+{
+    std::basic_string<char_t> configPath = path + STR("runtime.config.json");
+    std::basic_string<char_t> assemblyPath = path + STR("DotnetLoader.dll");
+
+    if (ctx.InitConfigFn(configPath.c_str(), nullptr, &ctx.Handle) != 0 || !ctx.Handle)
         return false;
-    }
 
-    int result = InitForConfigFn(configPath, nullptr, &HostFxrHandle);
-    if (result != 0 || !HostFxrHandle)
-    {
-        std::cerr << "Failed to initialize hostfxr with result: " << result << std::endl;
+    if (ctx.GetDelegateFn(ctx.Handle, hdt_load_assembly_and_get_function_pointer, (void**)&ctx.LoadAssemblyFn) != 0)
         return false;
-    }
-    wprintf(L"Hostfxr initialized successfully.\n");
 
-    result = GetDelegateFn(HostFxrHandle, hdt_load_assembly_and_get_function_pointer, (void**)&LoadAssemblyFn);
-    if (result != 0 || !LoadAssemblyFn)
-    {
-        std::cerr << "Failed to get load assembly function with result: " << result << std::endl;
-        return false;
-    }
-    wprintf(L"Load assembly delegate retrieved.\n");
+    const char_t* dotnetType = STR("DotnetLoader.Entry, DotnetLoader");
+    const char_t* dotnetMethod = STR("Initialize");
 
-    std::basic_string<char_t> assembly_path = STR("D:\\.mine\\endstone\\FPUCS\\HostLoader\\bin\\DotnetLoader.dll");
-    wprintf(L"Assembly path: %ls\n", assembly_path.c_str());
-    if (_waccess(assembly_path.c_str(), 0) != 0) {
-        std::cerr << "DotnetLoader.dll does not exist or is inaccessible" << std::endl;
-        return false;
-    }
-
-    const char_t *dotnet_type = STR("DotnetLoader.Entry, DotnetLoader");
-    const char_t *dotnet_type_method = STR("Hello");
-
-
-    result = LoadAssemblyFn(
-        assembly_path.c_str(),
-        dotnet_type,
-        dotnet_type_method,
+    int result = ctx.LoadAssemblyFn(
+        assemblyPath.c_str(),
+        dotnetType,
+        dotnetMethod,
         nullptr,
         nullptr,
-        (void**)&HelloFromDotnet
+        (void**)entry
     );
-
-    if (result != 0)
-    {
-        std::cerr << "Failed to load assembly with result: " << result << std::endl;
-        return false;
-    }
-
-    if (!HelloFromDotnet)
-    {
-        std::cerr << "Failed to get HelloFromDotnet function" << std::endl;
-        return false;
-    }
-
-    wprintf(L"Successfully loaded HelloFromDotnet function.\n");
-    return true;
-}
-
-void RunManaged()
-{
-    HelloFromDotnet();
-    CloseHostFn(HostFxrHandle);
+    return (result == 0 && *entry);
 }
 
 int main()
 {
-    if (!InitializeHostFxr())
-    {
+    HostContext ctx;
+    std::basic_string<char_t> hostPath;
+    if (!TryGetHostPath(hostPath) || !TryInitializeHostFxr(hostPath, ctx)) {
         std::cerr << "Failed to initialize hostfxr" << std::endl;
-        return 1;
-    }
-    if (!GetDelegates())
-    {
-        std::cerr << "Failed to get delegates" << std::endl;
         return 1;
     }
 
     std::basic_string<char_t> configPath;
-    if (!TryGetExecutablePath(configPath))
-    {
-        std::cerr << "Не удалось получить путь к исполняемому файлу." << std::endl;
-        return 1;
-    }
-    configPath += STR("runtime.config.json");
-
-    wprintf(L"configPath: %ls\n", configPath.c_str());
-
-    if (!LoadManagedMethod(configPath.c_str()))
-    {
-        std::cerr << "Failed to load managed method" << std::endl;
+    if (!TryGetExecutablePath(configPath)) {
+        std::cerr << "Failed to get executable path" << std::endl;
         return 1;
     }
 
-    RunManaged();
+    EntryPointFunction entry = nullptr;
+    if (!TryLoadManagedMethod(configPath, ctx, &entry)) {
+        std::cerr << "Failed to load managed Hello function" << std::endl;
+        return 1;
+    }
+
+    Plugin* plugin = new Plugin();
+
+    plugin->OnLoad = []() {
+        std::cout << "Hello from C++ plugin" << std::endl;
+    };
+
+    plugin->OnEnable = []() {
+        std::cout << "Enabled" << std::endl;
+    };
+
+    plugin->OnDisable = []() {
+        std::cout << "Disabled" << std::endl;
+    };
+
+    entry(plugin, 1);
+
+    plugin->OnLoad();
+    plugin->OnEnable();
+    plugin->OnDisable();
+
+    ctx.CloseFn(ctx.Handle);
     return 0;
 }
