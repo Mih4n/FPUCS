@@ -2,8 +2,7 @@ namespace DotnetLoaderLibrary;
 
 public interface IPlugin
 {
-    bool Enabled { get; }
-    ILogger Logger { get; }
+    ILogger? Logger { set; get; }
 
     void OnLoad();
     void OnEnable();
