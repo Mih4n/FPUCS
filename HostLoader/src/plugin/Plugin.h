@@ -1,9 +1,11 @@
 #pragma once
-#include "endstone/plugin/plugin.h"
 
-namespace my_plugin {
+#include "Dotnet/HostLoader.hpp"
+#include "EndstoneExports/Exports.hpp"
 
-class MyPlugin : public endstone::Plugin {
+namespace HostLoader {
+
+class Plugin : public endstone::Plugin {
 public:
     struct PluginInfo : public endstone::detail::PluginDescriptionBuilder {
         std::string name;
@@ -12,8 +14,8 @@ public:
     };
 
 public:
-    static MyPlugin* getInstance() {
-        static auto instance = new MyPlugin();
+    static Plugin* getInstance() {
+        static auto instance = new Plugin();
         return instance;
     }
 
@@ -29,7 +31,10 @@ public:
     void onDisable() override;
 
 private:
+    HostContext mHostContext;
     PluginInfo mPluginInfo;
+    PluginEntry mPluginEntry;
+    EntryPointFunction mEntryPoint;
 };
 
 } // namespace my_plugin

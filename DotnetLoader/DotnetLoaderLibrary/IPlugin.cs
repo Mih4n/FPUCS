@@ -1,3 +1,5 @@
+using DotnetLoaderLibrary.Base.Logger;
+
 namespace DotnetLoaderLibrary;
 
 public interface IPlugin

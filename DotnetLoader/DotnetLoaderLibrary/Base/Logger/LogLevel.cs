@@ -1,4 +1,4 @@
-namespace DotnetLoaderLibrary;
+namespace DotnetLoaderLibrary.Base.Logger;
 
 public enum LogLevel
 {

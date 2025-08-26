@@ -1,8 +1,10 @@
+using DotnetLoaderLibrary.Base.Logger;
+
 namespace DotnetLoaderLibrary;
 
 public class PluginBase : IPlugin
 {
-    public ILogger? Logger { get; set; }
+    public ILogger? Logger { get; set; } = null!;
 
     public virtual void OnLoad() { }
     public virtual void OnEnable() { }
