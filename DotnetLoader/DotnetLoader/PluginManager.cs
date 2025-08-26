@@ -1,9 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text.Json;
-using DotnetLoader.Base.Logger;
-using DotnetLoader.Plugin;
-using DotnetLoaderLibrary;
+using DotnetLoaderLibrary.Base.Logger;
+using DotnetLoaderLibrary.Plugin;
 
 namespace DotnetLoader;
 
@@ -29,25 +27,18 @@ public class PluginManager
         string[] dlls = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "plugins/dotnet"), "*.dll");
         foreach (string dll in dlls)
         {
-            Console.WriteLine($"Loading plugin: {dll}");    
-
             var loadContext = new PluginLoadContext(dll);
             Assembly assembly = loadContext.LoadFromAssemblyPath(dll);
             
             foreach (Type type in assembly.GetTypes())
             {
-                Console.WriteLine($"Found type: {type.Name}");
-
                 if (!type.IsSubclassOf(typeof(PluginBase))) continue;
 
                 Console.WriteLine($"Found plugin: {type.Name}");
 
                 if (Activator.CreateInstance(type) is PluginBase plugin)
                 {
-                    Console.WriteLine($"Loaded plugin: {type.Name}");
-                    var loggerPointer = PluginImports.GetLogger(callbacks.Pointer);
-                    Console.WriteLine($"Got logger pointer: {loggerPointer}");
-                    plugin.Logger = new Logger(loggerPointer);
+                    plugin.Pointer = callbacks.Pointer;
 
                     plugins.Add(plugin);
 

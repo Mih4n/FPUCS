@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
-using DotnetLoaderLibrary.Base.Logger;
 
-namespace DotnetLoader.Base.Logger;
+namespace DotnetLoaderLibrary.Base.Logger;
 
 public static class LoggerImports 
 {

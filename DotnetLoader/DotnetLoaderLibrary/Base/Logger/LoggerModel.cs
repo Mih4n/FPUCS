@@ -1,8 +1,6 @@
-using DotnetLoaderLibrary.Base.Logger;
+namespace DotnetLoaderLibrary.Base.Logger;
 
-namespace DotnetLoader.Base.Logger;
-
-public class Logger(nint pointer) : ILogger
+public class LoggerModel(nint pointer) : ILogger
 {
     public string Name => LoggerImports.GetName(pointer);
 
